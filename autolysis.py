@@ -1,12 +1,15 @@
-requires_python = ">=3.11"
-dependencies = [
-  "seaborn",
-  "pandas",
-  "matplotlib",
-  "httpx",
-  "chardet",
-  "numpy",
-]
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#   "seaborn",
+#   "pandas",
+#   "matplotlib",
+#   "httpx",
+#   "chardet",
+#   "requests",
+#   "numpy",
+# ]
+# ///
 
 
 import os
