@@ -1,15 +1,15 @@
-"""
-requires-python = ">=3.11"
-dependencies = [
-  "seaborn",
-  "pandas",
-  "matplotlib",
-  "httpx",
-  "chardet",
-  "requests",
-  "numpy",
-]
-"""
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#   "seaborn",
+#   "pandas",
+#   "matplotlib",
+#   "httpx",
+#   "chardet",
+#   "requests",
+#   "numpy",
+# ]
+# ///
 
 
 
