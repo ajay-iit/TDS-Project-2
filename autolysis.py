@@ -227,7 +227,7 @@ def narrate_analysis(context, file_path):
         readme_content += "## Regression Analysis\n\n"
         readme_content += f"{pd.DataFrame(context['regression_metrics'], index=['Value']).to_markdown()}\n\n"
         if context.get('regression_image'):
-            readme_content += f"![Regression Results](./{context['regression_image']})\n\n""
+            readme_content += f"![Regression Results](./{context['regression_image']})\n\n"
 
     readme_content += "## Conclusion\n\n"
     readme_content += story + "\n"
