@@ -1,235 +1,254 @@
-# /// script
-# requires-python = ">=3.11"
-# dependencies = [
-#   "seaborn",
-#   "pandas",
-#   "matplotlib",
-#   "httpx",
-#   "chardet",
-#   "ipykernel",
-#   "openai",
-#   "numpy",
-#   "scipy",
-# ]
-# ///
-
 import os
 import sys
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-import httpx
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+from sklearn.manifold import TSNE
+from sklearn.ensemble import IsolationForest
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, r2_score
+from os.path import splitext, basename, join
+from dotenv import load_dotenv
+from tabulate import tabulate
+import requests
+import json
+import matplotlib
 import chardet
-from pathlib import Path
-import asyncio
-import scipy.stats as stats
 
-# Constants
-API_URL = "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions"
+load_dotenv()
+matplotlib.use('Agg')
 
-# Ensure token is retrieved from environment variable
-def get_token():
-    try:
-        return os.environ["AIPROXY_TOKEN"]
-    except KeyError as e:
-        print(f"Error: Environment variable '{e.args[0]}' not set.")
-        raise
-
-async def load_data(file_path):
-    """Load CSV data with encoding detection."""
-    if not os.path.isfile(file_path):
-        raise FileNotFoundError(f"Error: File '{file_path}' not found.")
-
+def detect_encoding(file_path):
     with open(file_path, 'rb') as f:
-        result = chardet.detect(f.read())
-    encoding = result['encoding']
-    print(f"Detected file encoding: {encoding}")
-    return pd.read_csv(file_path, encoding=encoding)
+        raw_data = f.read()
+        result = chardet.detect(raw_data)
+        return result['encoding']
 
-async def async_post_request(headers, data):
-    """Async function to make HTTP requests."""
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(API_URL, headers=headers, json=data, timeout=30.0)
-            response.raise_for_status()
-            return response.json()['choices'][0]['message']['content']
-        except httpx.HTTPStatusError as e:
-            print(f"HTTP error occurred: {e}")
-            raise
-        except Exception as e:
-            print(f"Error during request: {e}")
-            raise
+def analyze_csv(file_path):
+    base_name = splitext(basename(file_path))[0]
+    output_dir = join(os.getcwd(), base_name)
+    os.makedirs(output_dir, exist_ok=True)
 
-async def generate_narrative(analysis, token, file_path):
-    """Generate narrative using LLM."""
-    headers = {
-        'Authorization': f'Bearer {token}',
-        'Content-Type': 'application/json'
-    }
-
-    prompt = (
-        f"You are a data analyst. Provide a detailed narrative based on the following data analysis results for the file '{file_path.name}':\n\n"
-        f"Column Names & Types: {list(analysis['summary'].keys())}\n\n"
-        f"Summary Statistics: {analysis['summary']}\n\n"
-        f"Missing Values: {analysis['missing_values']}\n\n"
-        f"Correlation Matrix: {analysis['correlation']}\n\n"
-        "Please provide insights into trends, outliers, anomalies, or patterns. "
-        "Suggest further analyses like clustering or anomaly detection. "
-        "Discuss how these trends may impact future decisions."
-    )
-
-    data = {
-        "model": "gpt-4o-mini",
-        "messages": [{"role": "user", "content": prompt}]
-    }
-
-    return await async_post_request(headers, data)
-
-async def analyze_data(df, token):
-    """Use LLM to suggest and perform data analysis."""
-    if df.empty:
-        raise ValueError("Error: Dataset is empty.")
-
-    # Enhanced prompt for better LLM analysis suggestions
-    prompt = (
-        f"You are a data analyst. Given the following dataset information, provide an analysis plan and suggest useful techniques:\n\n"
-        f"Columns: {list(df.columns)}\n"
-        f"Data Types: {df.dtypes.to_dict()}\n"
-        f"First 5 rows of data:\n{df.head()}\n\n"
-        "Suggest data analysis techniques, such as correlation, regression, anomaly detection, clustering, or others. "
-        "Consider missing values, categorical variables, and scalability."
-    )
-
-    headers = {
-        'Authorization': f'Bearer {token}',
-        'Content-Type': 'application/json'
-    }
-    data = {
-        "model": "gpt-4o-mini",
-        "messages": [{"role": "user", "content": prompt}]
-    }
-
+    # Load the dataset
     try:
-        suggestions = await async_post_request(headers, data)
+        encoding = detect_encoding(file_path)
+        data = pd.read_csv(file_path, encoding=encoding)
     except Exception as e:
-        suggestions = f"Error fetching suggestions: {e}"
+        print(f"Error reading {file_path}: {e}")
+        return
 
-    print(f"LLM Suggestions: {suggestions}")
+    # Summary statistics
+    summary = data.describe(include='all').transpose()
+    missing_values = data.isnull().sum()
 
-    # Basic analysis (summary statistics, missing values, correlations)
-    numeric_df = df.select_dtypes(include=['number'])
-    analysis = {
-        'summary': df.describe(include='all').to_dict(),
-        'missing_values': df.isnull().sum().to_dict(),
-        'correlation': numeric_df.corr().to_dict() if not numeric_df.empty else {}
-    }
+    # Correlation matrix
+    numeric_data = data.select_dtypes(include=['number'])
+    correlation_table = numeric_data.corr() if not numeric_data.empty else None
+    correlation_image = None
+    if correlation_table is not None:
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(correlation_table, annot=True, cmap='coolwarm')
+        plt.title('Correlation Matrix Heatmap')
+        correlation_image = join(output_dir, 'correlation_matrix.png')
+        plt.savefig(correlation_image)
+        plt.close()
 
-    # Hypothesis testing example (if 'A' and 'B' columns exist)
-    if 'A' in df.columns and 'B' in df.columns:
-        t_stat, p_value = stats.ttest_ind(df['A'].dropna(), df['B'].dropna())
-        analysis['hypothesis_test'] = {
-            't_stat': t_stat,
-            'p_value': p_value
+    # Clustering analysis
+    clustering_insights = "Not performed"
+    pca_image, tsne_image = None, None
+    if numeric_data.shape[1] > 1:
+        scaled_data = StandardScaler().fit_transform(numeric_data.dropna())
+        pca = PCA(n_components=2)
+        reduced_data = pca.fit_transform(scaled_data)
+
+        kmeans = KMeans(n_clusters=3, random_state=42)
+        clusters = kmeans.fit_predict(reduced_data)
+
+        plt.figure(figsize=(8, 6))
+        plt.scatter(reduced_data[:, 0], reduced_data[:, 1], c=clusters, cmap='viridis')
+        plt.title('Clustering Visualization (PCA)')
+        pca_image = join(output_dir, 'pca_clustering.png')
+        plt.savefig(pca_image)
+        plt.close()
+
+        tsne = TSNE(n_components=2, random_state=42)
+        tsne_data = tsne.fit_transform(scaled_data)
+
+        plt.figure(figsize=(8, 6))
+        plt.scatter(tsne_data[:, 0], tsne_data[:, 1], c=clusters, cmap='viridis')
+        plt.title('Clustering Visualization (t-SNE)')
+        tsne_image = join(output_dir, 'tsne_clustering.png')
+        plt.savefig(tsne_image)
+        plt.close()
+
+        clustering_insights = "Clustering performed using PCA and t-SNE."
+
+    # Outlier detection
+    outlier_insights = "Not performed"
+    outliers_image = None
+    if numeric_data.shape[1] > 1:
+        isolation_forest = IsolationForest(random_state=42, contamination=0.05)
+        outliers = isolation_forest.fit_predict(scaled_data)
+
+        plt.figure(figsize=(8, 6))
+        plt.scatter(reduced_data[:, 0], reduced_data[:, 1], c=outliers, cmap='coolwarm', alpha=0.6)
+        plt.title('Outlier Detection (Isolation Forest)')
+        outliers_image = join(output_dir, 'outliers.png')
+        plt.savefig(outliers_image)
+        plt.close()
+
+        outlier_insights = "Outlier detection performed using Isolation Forest."
+
+    # Regression analysis (Linear Regression)
+
+    regression_metrics, regression_image = "Not performed", None
+    if numeric_data.shape[1] > 1:
+        X = numeric_data.iloc[:, 0].values.reshape(-1, 1)
+        y = numeric_data.iloc[:, 1].values
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+        regressor = LinearRegression()
+        regressor.fit(X_train, y_train)
+        y_pred = regressor.predict(X_test)
+
+        regression_metrics = {
+            "Mean Squared Error": mean_squared_error(y_test, y_pred),
+            "R2 Score": r2_score(y_test, y_pred),
         }
 
-    print("Data analysis complete.")
-    return analysis, suggestions
-
-async def visualize_data(df, output_dir):
-    """Generate and save visualizations."""
-    sns.set(style="whitegrid")
-    numeric_columns = df.select_dtypes(include=['number']).columns
-
-    # Select main columns for distribution based on importance
-    selected_columns = numeric_columns[:3] if len(numeric_columns) >= 3 else numeric_columns
-
-    # Ensure output directory exists
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Enhanced visualizations (distribution plots, heatmap)
-    for column in selected_columns:
-        plt.figure(figsize=(6, 6))
-        sns.histplot(df[column].dropna(), kde=True, color='skyblue')
-        plt.title(f'Distribution of {column}')
-        file_name = output_dir / f'{column}_distribution.png'
-        plt.savefig(file_name, dpi=100)
-        print(f"Saved distribution plot: {file_name}")
+        plt.figure(figsize=(8, 6))
+        plt.scatter(X_test, y_test, color='blue')
+        plt.plot(X_test, y_pred, color='red')
+        plt.title('Linear Regression')
+        regression_image = join(output_dir, 'regression.png')
+        plt.savefig(regression_image)
         plt.close()
 
-    if len(numeric_columns) > 1:
-        plt.figure(figsize=(8, 8))
-        corr = df[numeric_columns].corr()
-        sns.heatmap(corr, annot=True, cmap='coolwarm', square=True)
-        plt.title('Correlation Heatmap')
-        file_name = output_dir / 'correlation_heatmap.png'
-        plt.savefig(file_name, dpi=100)
-        print(f"Saved correlation heatmap: {file_name}")
-        plt.close()
+    # Save analysis context
 
-async def save_narrative_with_images(narrative, output_dir):
-    """Save narrative to README.md and embed image links."""
-    readme_path = output_dir / 'README.md'
-    image_links = "\n".join(
-        [f"![{img.name}]({img.name})" for img in output_dir.glob('*.png')]
+    context = {
+        'columns': data.columns.tolist(),
+        'dtypes': data.dtypes.astype(str).tolist(),
+        'missing_values': missing_values.to_frame(name="Missing Values"),
+        'summary': summary,
+        'correlation_table': correlation_table,
+        'correlation_image': 'correlation_matrix.png' if correlation_image else None,
+        'clustering_insights': clustering_insights,
+        'pca_image': 'pca_clustering.png' if pca_image else None,
+        'tsne_image': 'tsne_clustering.png' if tsne_image else None,
+        'outlier_insights': outlier_insights,
+        'outliers_image': 'outliers.png' if outliers_image else None,
+        'regression_metrics': regression_metrics,
+        'regression_image': 'regression.png' if regression_image else None,
+    }
+
+    return context
+
+def narrate_analysis(context, file_path):
+    base_name = splitext(basename(file_path))[0]
+    output_dir = join(os.getcwd(), base_name)
+    os.makedirs(output_dir, exist_ok=True)
+    readme_file = join(output_dir, "README.md")
+
+    url = "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions"
+    api_key = os.getenv("AIPROXY_TOKEN")
+
+    prompt = (
+        f"Analyze the dataset '{file_path}'. Here is the context:\n"
+        f"Columns and types: {context['columns']}, {context['dtypes']}\n"
+        f"Missing values: {context['missing_values'].to_markdown(index=True)}\n"
+        f"Summary statistics:\n{context['summary'].to_markdown(index=True)}\n"
+        f"Correlation matrix insights:\n{context['correlation_table'].to_markdown(index=True) if context.get('correlation_table') is not None else 'Not provided'}\n"
+        f"Clustering results: {context.get('clustering_insights', 'Not performed')}\n"
+        f"Outlier detection results: {context.get('outlier_insights', 'Not performed')}\n"
+        f"Regression analysis metrics: {context.get('regression_metrics', 'Not performed')}\n"
+        "Generate insights and provide a structured Markdown report, including:\n"
+        "1. Dataset Overview: Highlight important features and missing values.\n"
+        "2. Correlation Analysis: Include tables and insights.\n"
+        "3. Clustering Analysis: Interpret PCA and t-SNE visualizations.\n"
+        "4. Outlier Detection: Summarize anomalies and visualizations.\n"
+        "5. Regression Analysis: Summarize performance metrics and provide interpretations.\n"
+        "6. Conclusion: Provide a final summary of findings"
     )
-    with open(readme_path, 'w') as f:
-        f.write(narrative + "\n\n" + image_links)
-    print(f"Narrative successfully written to {readme_path}")
 
-async def main(file_path):
-    print("Starting autolysis process...")
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
 
-    # Ensure input file exists
-    file_path = Path(file_path)
-    if not file_path.is_file():
-        print(f"Error: File '{file_path}' does not exist.")
-        sys.exit(1)
+    data = {
+        "model": "gpt-4o-mini",
+        "messages": [
+            {"role": "user", "content": prompt}
+        ]
+    }
 
-    # Load token
     try:
-        token = get_token()
+        response = requests.post(url, headers=headers, json=data)
+        response.raise_for_status()
+        story = response.json()["choices"][0]["message"]["content"].strip()
     except Exception as e:
-        print(e)
-        sys.exit(1)
+        print(f"Error generating narrative: {e}")
+        story = "Error generating narrative."
 
-    # Load dataset
+    readme_content = "# Analysis Report\n\n"
+    readme_content += "## Dataset Overview\n\n"
+    readme_content += "### Summary Statistics\n\n"
+    readme_content += f"{context['summary'].to_markdown(index=True)}\n\n"
+    readme_content += "### Missing Values\n\n"
+    readme_content += f"{context['missing_values'].to_markdown(index=True)}\n\n"
+
+    if context.get('correlation_table') is not None:
+        readme_content += "## Correlation Analysis\n\n"
+        readme_content += "### Correlation Matrix\n\n"
+        readme_content += f"{context['correlation_table'].to_markdown(index=True)}\n\n"
+        if context.get('correlation_image'):
+            readme_content += f"![Correlation Heatmap](./{context['correlation_image']})\n\n"
+
+    if context.get('clustering_insights'):
+        readme_content += "## Clustering Analysis\n\n"
+        readme_content += f"{context['clustering_insights']}\n\n"
+        if context.get('pca_image'):
+            readme_content += f"![PCA Clustering](./{context['pca_image']})\n\n"
+        if context.get('tsne_image'):
+            readme_content += f"![t-SNE Clustering](./{context['tsne_image']})\n\n"
+
+    if context.get('outlier_insights'):
+        readme_content += "## Outlier Detection\n\n"
+        readme_content += f"{context['outlier_insights']}\n\n"
+        if context.get('outliers_image'):
+            readme_content += f"![Outliers Visualization](./{context['outliers_image']})\n\n"
+
+    if context.get('regression_metrics'):
+        readme_content += "## Regression Analysis\n\n"
+        readme_content += f"{pd.DataFrame(context['regression_metrics'], index=['Value']).to_markdown()}\n\n"
+        if context.get('regression_image'):
+            readme_content += f"![Regression Results](./{context['regression_image']})\n\n""
+
+    readme_content += "## Conclusion\n\n"
+    readme_content += story + "\n"
+
     try:
-        df = await load_data(file_path)
-    except FileNotFoundError as e:
-        print(e)
-        sys.exit(1)
-    print("Dataset loaded successfully.")
+        with open(readme_file, 'w') as f:
+            f.write(readme_content)
+    except Exception as e:
+        print(f"Error saving README: {e}")
 
-    # Analyze data with LLM insights
-    print("Analyzing data...")
-    try:
-        analysis, suggestions = await analyze_data(df, token)
-    except ValueError as e:
-        print(e)
+if _name_ == "_main_":
+    if len(sys.argv) < 2:
+        print("Usage: uv run autolysis.py <file1.csv> <file2.csv> ...")
         sys.exit(1)
 
-    print(f"LLM Analysis Suggestions: {suggestions}")
+    file_paths = sys.argv[1:]
 
-    # Create output directory
-    output_dir = Path(file_path.stem)  # Create a directory named after the dataset
-    output_dir.mkdir(exist_ok=True)
-
-    # Generate visualizations with LLM suggestions
-    print("Generating visualizations...")
-    await visualize_data(df, output_dir)
-
-    # Generate narrative
-    print("Generating narrative using LLM...")
-    narrative = await generate_narrative(analysis, token, file_path)
-
-    if narrative != "Narrative generation failed due to an error.":
-        await save_narrative_with_images(narrative, output_dir)
-    else:
-        print("Narrative generation failed.")
-
-# Execute script
-if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python script.py <file_path>")
-        sys.exit(1)
-    asyncio.run(main(sys.argv[1]))
+    for file_path in file_paths:
+        if os.path.exists(file_path):
+            context = analyze_csv(file_path)
+            if context:
+                narrate_analysis(context, file_path)
+        else:
+            print(f"File not found: {file_path}")
